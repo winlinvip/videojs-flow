@@ -1,4 +1,5 @@
 # mse-live
+
 Low latency live streaming over MSE(Media Source Extension)
 
 ```
@@ -6,6 +7,10 @@ Low latency live streaming over MSE(Media Source Extension)
 | MediaSource  +---<---+ js flv2mp4 +---<---+ flv over websocket |
 +--------------+       +------------+       +--------------------+
 ```
+
+## Usage
+
+To check your browser whether support MSE, click [here](http://ossrs.net/html5/).
 
 ## Links
 
