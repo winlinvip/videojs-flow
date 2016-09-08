@@ -33,4 +33,6 @@ About Videojs:
 1. http://videojs.com/getting-started/
 1. http://ossrs.net/mse/videojs.html
 
+> Remark: The MSE(Chrome) requires segment starts with keyframe, read [videojs](https://github.com/winlinvip/mux.js/blob/master/lib/mp4/transmuxer.js#L319). 
+
 Winlin 2016
