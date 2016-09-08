@@ -10,7 +10,7 @@ Low latency live streaming over MSE(Media Source Extension)
 
 ## Usage
 
-To check your browser whether support MSE, click [here](http://ossrs.net/html5/).
+To check your browser whether support MSE, click [here](http://ossrs.net/mse/html5.html).
 
 ## Links
 
@@ -27,5 +27,10 @@ About MSE(Media Source Extension):
 1. https://developer.mozilla.org/en-US/docs/Web/API/MediaSource
 1. https://en.wikipedia.org/wiki/Media_Source_Extensions
 1. http://caniuse.com/#feat=mediasource
+
+About Videojs:
+
+1. http://videojs.com/getting-started/
+1. http://ossrs.net/mse/videojs.html
 
 Winlin 2016

@@ -1,0 +1,94 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>HTML5</title>
+    <style>
+        .yes {
+            color: darkgreen;
+        }
+        .no {
+            color: darkred;
+        }
+    </style>
+</head>
+<body>
+<div>
+    <h3>此浏览器支持哪些播放器？</h3>
+    <ul>
+        <li id="c-video">HTMLVideoElement</li>
+        <li id="c-h264">H.264</li>
+        <li id="c-webm">WebM VP8</li>
+    </ul>
+    
+    <ul>
+        <li id="c-mse">Media Source Extensions</li>
+        <li id="c-mse-h264">MSE &amp; H.264</li>
+        <li id="c-mse-webm">MSE &amp; WebM VP9</li>
+    </ul>
+
+    <ul>
+        <li id="c-websocket">WebSocket</li>
+    </ul>
+
+    <div id="html5-join-link"></div>
+    <div id="user-agent"></div>
+</div>
+<script>
+    function checkFormats() {
+        var videoElement = document.createElement('video');
+
+        var setCompatibility = function(id, isCompatible) {
+            var el = document.getElementById(id);
+            el.className = isCompatible ? 'yes' : 'no';
+
+            var st = document.createElement('span');
+            st.innerText = ': ' + (isCompatible ? 'YES' : 'NO');
+            el.appendChild(st);
+        };
+
+        var videoCompatible = videoElement && videoElement.canPlayType;
+        setCompatibility('c-video', videoCompatible);
+
+        var join = document.getElementById('html5-join-link');
+        if (videoCompatible) {
+            join.innerText = '如果可能，首选 HTML5 播放器。';
+        } else {
+            join.innerText = '您的浏览器不支持 HTML5 标准的视频。';
+        }
+
+        setCompatibility('c-websocket', window.WebSocket);
+
+        setCompatibility('c-h264',
+                videoElement && videoElement.canPlayType &&
+                videoElement.canPlayType('video/mp4; codecs="avc1.42001E, mp4a.40.2"'));
+
+        setCompatibility('c-webm',
+                videoElement && videoElement.canPlayType &&
+                videoElement.canPlayType('video/webm; codecs="vp8.0, vorbis"'));
+
+        var mse = window['MediaSource'] || window['WebKitMediaSource'];
+        setCompatibility('c-mse', !!mse);
+        var checkMSECompatibility = function(mimeType) {
+            if (mse && !mse.isTypeSupported) {
+                // When async type detection is required, fall back to canPlayType.
+                return videoElement.canPlayType(mimeType);
+            } else {
+                return mse && mse.isTypeSupported(mimeType);
+            }
+        };
+
+        setCompatibility('c-mse-h264',
+                checkMSECompatibility('video/mp4; codecs="avc1.4d401e"'));
+        setCompatibility('c-mse-webm',
+                checkMSECompatibility('video/webm; codecs="vp9"'));
+
+        var ua = document.getElementById("user-agent");
+        ua.innerText = 'UserAgent: ' + navigator.userAgent;
+    }
+    checkFormats();
+</script>
+</body>
+</html>

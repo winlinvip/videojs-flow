@@ -1,0 +1,31 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Videojs</title>
+    <!--<link href="video-js.css" rel="stylesheet">-->
+    <link href="http://vjs.zencdn.net/5.8.8/video-js.css" rel="stylesheet">
+    <!--<script src="videojs-ie8.min.js"></script>-->
+    <script src="http://vjs.zencdn.net/ie8/1.1.2/videojs-ie8.min.js"></script>
+</head>
+<body>
+    <video id="my-video" class="video-js" width=640 height=264 data-setup='{}' controls preload="auto" autoplay>
+        <!--<source src="http://localhost:8085/live/livestream.m3u8" type="application/x-mpegURL">-->
+        <!--<source src="http://hlsplus.ossrs.net:8083/show/livestream.m3u8?shp_identify=variant" type="application/x-mpegURL">-->
+        <!--<source src="/live/livestream.m3u8?shp_identify=302" type="application/x-mpegURL">-->
+        <!--<source src="/live/livestream.m3u8?shp_identify=variant" type="application/x-mpegURL">-->
+        <source src="http://ossrs.net/apple-sample/bipbopall.m3u8" type="application/x-mpegURL">
+        <!--<source src="/live/livestream.flv" type="video/x-flv">-->
+        <p class="vjs-no-js">
+            To view this video please enable JavaScript, and consider upgrading to a web browser that
+            <a href="http://videojs.com/html5-video-support/" target="_blank">supports HTML5 video</a>
+        </p>
+    </video>
+    <!--<script src="video.js"></script>-->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/video.js/5.10.2/video.js"></script>
+    <!--<script src="videojs-contrib-hls.js"></script>-->
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/videojs-contrib-hls/3.5.0/videojs-contrib-hls.min.js"></script>
+</body>
+</html>
