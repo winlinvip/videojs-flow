@@ -20,7 +20,10 @@ func main()  {
 
 		for {
 			now := time.Now().Format("2006-01-02 15:04:05.000")
-			websocket.Message.Send(c, fmt.Sprintf("%v, %v", now, msg))
+			if err := websocket.Message.Send(c, fmt.Sprintf("%v, %v", now, msg)); err != nil {
+				fmt.Println("Send failed, err is", err)
+				return
+			}
 			time.Sleep(1 * time.Second)
 		}
 	}))
