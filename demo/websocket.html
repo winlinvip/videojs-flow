@@ -1,0 +1,28 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>WebSocket</title>
+</head>
+<body>
+    <script>
+        var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
+        ws.onopen = function() {
+            ws.send('Hello, websocket!');
+        };
+        ws.onmessage = function(evt) {
+            document.write('<span>ws: '+ evt.data + '</span><br/>');
+        };
+        ws.onclose = function(evt) {
+            document.write('<span font="yellow">ws: closed</span><br/>');
+            console.log(evt);
+        };
+        ws.onerror = function(evt) {
+            document.write('<span font="darkred">ws: closed</span><br/>');
+            console.log(evt);
+        };
+    </script>
+</body>
+</html>
