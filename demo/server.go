@@ -13,7 +13,7 @@ func main()  {
 	flag.IntVar(&port, "l", 8088, "the port to listen for websocket")
 	flag.Parse()
 
-	http.Handle("/live/livestream.flv", websocket.Handler(func(c *websocket.Conn){
+	http.Handle("/", websocket.Handler(func(c *websocket.Conn){
 		var msg string
 		websocket.Message.Receive(c, &msg)
 		fmt.Println("Got websocket connection", c.RemoteAddr().String(), msg)
@@ -28,7 +28,7 @@ func main()  {
 		}
 	}))
 
-	fmt.Println(fmt.Sprintf("Client can connect to ws://127.0.0.1:%v/live/livestream.flv", port))
+	fmt.Println(fmt.Sprintf("Client can connect to ws://127.0.0.1:%v/echo", port))
 	if err := http.ListenAndServe(fmt.Sprintf(":%v", port), nil); err != nil {
 		fmt.Println("Serve failed, err is", err)
 	}

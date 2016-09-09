@@ -8,8 +8,9 @@
 </head>
 <body>
     <script>
-        var ws = new WebSocket("ws://ossrs.net:8088/live/livestream.flv");
+        var ws = new WebSocket("ws://127.0.0.1:8088/echo");
         ws.onopen = function() {
+            document.write('<span>ws: ' + ws.url + ' opened</span><br/>');
             ws.send('Hello, websocket!');
         };
         ws.onmessage = function(evt) {

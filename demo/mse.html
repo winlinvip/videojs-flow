@@ -1,0 +1,29 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>MseLive</title>
+</head>
+<body>
+<script>
+    var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
+    ws.onopen = function() {
+        document.write('<span>ws: ' + ws.url + ' opened</span><br/>');
+    };
+    ws.onmessage = function(evt) {
+        var b = evt.data; // Blob: https://developer.mozilla.org/en-US/docs/Web/API/Blob
+        document.write('<span>ws: blob ' + b.type + ' ' + b.size + 'bytes</span><br/>');
+    };
+    ws.onclose = function(evt) {
+        document.write('<span font="yellow">ws: closed</span><br/>');
+        console.log(evt);
+    };
+    ws.onerror = function(evt) {
+        document.write('<span font="darkred">ws: closed</span><br/>');
+        console.log(evt);
+    };
+</script>
+</body>
+</html>
