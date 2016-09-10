@@ -1,6 +1,6 @@
-# mse-live
+# MSE-HDL
 
-Low latency live streaming over MSE(Media Source Extension)
+MSE-HDL(HTTP FLV Live Stream), Low latency live streaming over MSE(Media Source Extension).
 
 ```
 +--------------+       +------------+       +--------------------+
