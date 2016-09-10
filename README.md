@@ -1,11 +1,14 @@
-# MSE-FLOW
+# videojs-flow
 
-MSE-FLOW(FLV Live over websocket), low latency live streaming over MSE(Media Source Extension).
+videojs-flow(flv live over websocket), low latency live streaming 
+[plugin](https://github.com/videojs/video.js/wiki/Plugins) 
+for [videojs](http://videojs.com/).
 
 ```
-+--------------+       +------------+       +-------------------------+
-| MediaSource  +---<---+ js flv2mp4 +---<---+ flv live over websocket |
-+--------------+       +------------+       +-------------------------+
++---------------+       +----------------+       +---------------------------+
+| videojs(MSE)  +---<---+ videojs-flow   +---<---+      Media Server         +
++---------------+       + (js flv2mp4)   +       + (flv live over websocket) +
+                        +----------------+       +---------------------------+
 ```
 
 ## Usage
