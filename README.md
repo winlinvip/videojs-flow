@@ -1,6 +1,6 @@
 # MSE-FLOW
 
-MSE-FLOW(FLV Live over websocket), Low latency live streaming over MSE(Media Source Extension).
+MSE-FLOW(FLV Live over websocket), low latency live streaming over MSE(Media Source Extension).
 
 ```
 +--------------+       +------------+       +-------------------------+
