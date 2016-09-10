@@ -1,11 +1,11 @@
-# MSE-HDL
+# MSE-FLOW
 
-MSE-HDL(HTTP FLV Live Stream), Low latency live streaming over MSE(Media Source Extension).
+MSE-FLOW(FLV Live over websocket), Low latency live streaming over MSE(Media Source Extension).
 
 ```
-+--------------+       +------------+       +--------------------+
-| MediaSource  +---<---+ js flv2mp4 +---<---+ flv over websocket |
-+--------------+       +------------+       +--------------------+
++--------------+       +------------+       +-------------------------+
+| MediaSource  +---<---+ js flv2mp4 +---<---+ flv live over websocket |
++--------------+       +------------+       +-------------------------+
 ```
 
 ## Usage
