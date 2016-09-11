@@ -24,6 +24,7 @@
             var sourceBuffer = mediaSource.addSourceBuffer(mimeCodec);
 
             var flv = new FlvReader();
+            var codec = new FlvCodec();
 
             var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
             ws.onmessage = function(evt) {
@@ -31,27 +32,452 @@
                 var reader = new FileReader();
                 reader.addEventListener('loadend', function(){
                     var bytes = new Uint8Array(reader.result);
-                    flowProcess(sourceBuffer, flv, bytes);
+                    transmux(sourceBuffer, flv, codec, bytes);
                 });
                 reader.readAsArrayBuffer(b);
             };
         });
 
-        function flowProcess(sourceBuffer, flv, bytes) {
+        // flv => tag => annexb/adts => mp4 => mse.
+        function transmux(sourceBuffer, flv, codec, bytes) {
             flv.append(bytes);
+
             while (true) {
                 var tag = flv.read();
                 if (!tag) {
                     break;
                 }
-                console.log(tag.toString());
+
+                //console.log(tag.toString());
+                if (tag.isAudio()) {
+                    var adts = codec.toAdts(tag);
+                    continue;
+                }
+
+                if (tag.isVideo()) {
+                    var annexb = codec.toAnnexb(tag);
+                    continue;
+                }
             }
         }
 
         // The flv reader to parse flv stream.
         // @see http://download.macromedia.com/f4v/video_file_format_spec_v10_1.pdf
-        var FlvReader, FlvTag;
+        var FlvReader, FlvTag, FlvCodec;
 
+        // convert flv to adts for aac or annexb for avc.
+        FlvCodec = function() {
+            // set to the zero to reserved, for array map.
+            var SrsCodecVideoAVCFrameReserved = 0,
+                    SrsCodecVideoAVCFrameReserved1 = 6,
+                    SrsCodecVideoAVCFrameKeyFrame = 1,
+                    SrsCodecVideoAVCFrameInterFrame= 2,
+                    SrsCodecVideoAVCFrameDisposableInterFrame = 3,
+                    SrsCodecVideoAVCFrameGeneratedKeyFrame = 4,
+                    SrsCodecVideoAVCFrameVideoInfoFrame = 5;
+
+            // Table 1.1 - Audio Object Type definition
+            // @see @see aac-mp4a-format-ISO_IEC_14496-3+2001.pdf, page 23
+            var SrsAacObjectTypeReserved = 0,
+                    SrsAacObjectTypeAacMain = 1,
+                    SrsAacObjectTypeAacLC = 2,
+                    SrsAacObjectTypeAacSSR = 3,
+                    SrsAacObjectTypeAacHE = 5, // AAC HE = LC+SBR
+                    SrsAacObjectTypeAacHEV2 = 29; // AAC HEv2 = LC+SBR+PS
+
+            /**
+             * the avc payload format, must be ibmf or annexb format.
+             * we guess by annexb first, then ibmf for the first time,
+             * and we always use the guessed format for the next time.
+             */
+            var SrsAvcPayloadFormatGuess = 0,
+                    SrsAvcPayloadFormatAnnexb = 1,
+                    SrsAvcPayloadFormatIbmf = 2;
+
+            // @see 7.1 Profiles, aac-iso-13818-7.pdf, page 40
+            var SrsAacProfileMain = 0,
+                    SrsAacProfileLC = 1,
+                    SrsAacProfileSSR = 2,
+                    SrsAacProfileReserved = 3;
+
+            var self = this;
+            self.aac = {
+                ok: false,
+                object: 0, // SrsAacObjectType
+                sampleRate: 0,
+                channels: 0,
+            };
+            self.avc = {
+                ok: false,
+                profile: 0, // SrsAvcProfile
+                level: 0, // SrsAvcLevel
+                naluSize: 0,
+                sps: null,
+                pps: null,
+                payload_format: SrsAvcPayloadFormatGuess,
+            };
+
+            // @see srs_codec_aac_rtmp2ts
+            self.aac_rtmp2ts = function(object_type) {
+                switch (object_type) {
+                    case SrsAacObjectTypeAacMain: return SrsAacProfileMain;
+                    case SrsAacObjectTypeAacHE:
+                    case SrsAacObjectTypeAacHEV2:
+                    case SrsAacObjectTypeAacLC: return SrsAacProfileLC;
+                    case SrsAacObjectTypeAacSSR: return SrsAacProfileSSR;
+                    default: return SrsAacProfileReserved;
+                }
+            };
+
+            // aac audio to adts format for AdtsStream:
+            //      toAdts(tag FlvTag) (frame Uint8Array)
+            // @return null if not got adts frame.
+            // @see SrsAacEncoder::write_audio
+            self.toAdts = function(tag) {
+                var buf = tag.tag;
+                if (buf.byteLength < 2) {
+                    throw new Error("audio tag invalid, size=" + buf.byteLength);
+                }
+
+                // @see: E.4.2 Audio Tags, video_file_format_spec_v10_1.pdf, page 76
+                var sound_format = buf[0];
+                // @see: SrsAvcAacCodec::audio_aac_demux
+                //int8_t sound_type = sound_format & 0x01;
+                //int8_t sound_size = (sound_format >> 1) & 0x01;
+                //int8_t sound_rate = (sound_format >> 2) & 0x03;
+                sound_format = (sound_format >> 4) & 0x0f;
+                //     10 = AAC
+                if (sound_format != 10) {
+                    throw new Error("audio is not aac, format=" + sound_format);
+                }
+
+                var aac_packet_type = buf[1];
+                buf = buf.subarray(2);
+                if (aac_packet_type == 0) {
+                    // AudioSpecificConfig
+                    // 1.6.2.1 AudioSpecificConfig, in aac-mp4a-format-ISO_IEC_14496-3+2001.pdf, page 33.
+                    //
+                    // only need to decode the first 2bytes:
+                    // audioObjectType, 5bits.
+                    // samplingFrequencyIndex, aac_sample_rate, 4bits.
+                    // channelConfiguration, aac_channels, 4bits
+                    if (buf.byteLength < 2) {
+                        throw new Error("aac sequence header invalid, size=" + buf.byteLength);
+                    }
+
+                    var audioObjectType = buf[0];
+                    self.aac.sampleRate = buf[1];
+
+                    self.aac.channels = (self.aac.sampleRate >> 3) & 0x0f;
+                    self.aac.sampleRate = ((audioObjectType << 1) & 0x0e) | ((self.aac.sampleRate >> 7) & 0x01);
+
+                    self.aac.object = (audioObjectType >> 3) & 0x1f;
+                    self.aac.ok = true;
+                    return null;
+                }
+
+                if (!self.aac.ok) {
+                    throw new Error("no aac sequence header");
+                }
+
+                // the left is the aac raw frame data.
+                var aac_raw_length = buf.byteLength;
+
+                // write the ADTS header.
+                // @see aac-mp4a-format-ISO_IEC_14496-3+2001.pdf, page 75,
+                //      1.A.2.2 Audio_Data_Transport_Stream frame, ADTS
+                // @see https://github.com/ossrs/srs/issues/212#issuecomment-64145885
+                // byte_alignment()
+
+                // adts_fixed_header:
+                //      12bits syncword,
+                //      16bits left.
+                // adts_variable_header:
+                //      28bits
+                //      12+16+28=56bits
+                // adts_error_check:
+                //      16bits if protection_absent
+                //      56+16=72bits
+                // if protection_absent:
+                //      require(7bytes)=56bits
+                // else
+                //      require(9bytes)=72bits
+                var aac_fixed_header = new Uint8Array(7);
+                var aac_frame_length = aac_raw_length + 7;
+
+                // Syncword 12 bslbf
+                aac_fixed_header[0] = 0xff;
+                // 4bits left.
+                // adts_fixed_header(), 1.A.2.2.1 Fixed Header of ADTS
+                // ID 1 bslbf
+                // Layer 2 uimsbf
+                // protection_absent 1 bslbf
+                aac_fixed_header[1] = 0xf1;
+
+                // profile 2 uimsbf
+                // sampling_frequency_index 4 uimsbf
+                // private_bit 1 bslbf
+                // channel_configuration 3 uimsbf
+                // original/copy 1 bslbf
+                // home 1 bslbf
+                var aac_profile = self.aac_rtmp2ts(self.aac.object);
+                aac_fixed_header[2] = ((aac_profile << 6) & 0xc0) | ((self.aac.sampleRate << 2) & 0x3c) | ((self.aac.channels >> 2) & 0x01);
+                // 4bits left.
+                // adts_variable_header(), 1.A.2.2.2 Variable Header of ADTS
+                // copyright_identification_bit 1 bslbf
+                // copyright_identification_start 1 bslbf
+                aac_fixed_header[3] = ((self.aac.channels << 6) & 0xc0) | ((aac_frame_length >> 11) & 0x03);
+
+                // aac_frame_length 13 bslbf: Length of the frame including headers and error_check in bytes.
+                // use the left 2bits as the 13 and 12 bit,
+                // the aac_frame_length is 13bits, so we move 13-2=11.
+                aac_fixed_header[4] = aac_frame_length >> 3;
+                // adts_buffer_fullness 11 bslbf
+                aac_fixed_header[5] = (aac_frame_length << 5) & 0xe0;
+
+                // no_raw_data_blocks_in_frame 2 uimsbf
+                aac_fixed_header[6] = 0xfc;
+
+                var adts = new Uint8Array(aac_frame_length);
+                adts.set(aac_fixed_header);
+                adts.set(buf, 7);
+                return adts;
+            };
+
+            // avc video to annexb format for NalByteStream:
+            //      toAdts(tag FlvTag) (frame Uint8Array)
+            self.toAnnexb = function(tag) {
+                var buf = tag.tag;
+                if (buf.byteLength < 5) {
+                    throw new Error("video tag invalid, size=" + buf.byteLength);
+                }
+
+                // @see: E.4.3 Video Tags, video_file_format_spec_v10_1.pdf, page 78
+                var frame_type = buf[0];
+                var codec_id = frame_type & 0x0f;
+                frame_type = (frame_type >> 4) & 0x0f;
+
+                // video sample, contains all NALUs in frame.
+                var sample = {ok:false, frame_type:frame_type, size:tag.tag.byteLength, dts:tag.dts, cts:0, pts:0, avc_packet_type:0, nalus:[],};
+                // ignore info frame without error,
+                // @see https://github.com/ossrs/srs/issues/288#issuecomment-69863909
+                if (sample.frame_type == SrsCodecVideoAVCFrameVideoInfoFrame) {
+                    return null;
+                }
+
+                // only support h.264/avc
+                if (codec_id != 7) {
+                    throw new Error("only support avc, actual=" + codec_id);
+                }
+                var avc_packet_type = buf[1];
+                var composition_time = (buf[2]<<16)|(buf[3]<<8)|(buf[4]);
+                buf = buf.subarray(5);
+
+                // pts = dts + cts.
+                sample.cts = composition_time;
+                sample.pts = sample.dts + sample.cts;
+                sample.avc_packet_type = avc_packet_type;
+                if (sample.avc_packet_type == 0) { // SequenceHeader
+                    self.avc_demux_sps_pps(buf);
+                    /*console.log("sps/pps profile=" + self.avc.profile + ", level=" + self.avc.level
+                            + ", naluSize=" + self.avc.naluSize + ", sps=" + (self.avc.sps? self.avc.sps.byteLength:0)
+                            + ", pps=" + (self.avc.pps? self.avc.pps.byteLength:0));*/
+                    return null;
+                } else if (sample.avc_packet_type == 1) { // NALU
+                    self.avc_demux_sample(buf, sample)
+                    if (!sample.ok) {
+                        return null;
+                    }
+                    return self.avc_transmux_sample(sample);
+                }
+                return null;
+            };
+            self.avc_demux_sps_pps = function(buf) {
+                if (buf.byteLength < 5) {
+                    throw new Error("sps/pps invalid, size=" + buf.byteLength);
+                }
+
+                //int8_t configurationVersion = stream->read_1bytes();
+                //int8_t AVCProfileIndication = stream->read_1bytes();
+                self.avc.profile = buf[1];
+                //int8_t profile_compatibility = stream->read_1bytes();
+                //int8_t AVCLevelIndication = stream->read_1bytes();
+                self.avc.level = buf[3];
+
+                // parse the NALU size.
+                self.avc.naluSize = (buf[4]&0x03); // lengthSizeMinusOne
+
+                // 5.3.4.2.1 Syntax, H.264-AVC-ISO_IEC_14496-15.pdf, page 16
+                // 5.2.4.1 AVC decoder configuration record
+                // 5.2.4.1.2 Semantics
+                // The value of this field shall be one of 0, 1, or 3 corresponding to a
+                // length encoded with 1, 2, or 4 bytes, respectively.
+                if (self.avc.naluSize == 2) {
+                    throw new Error("invalid nalu size=" + self.avc.naluSize);
+                }
+                buf = buf.subarray(5);
+
+                // 1 sps, 7.3.2.1 Sequence parameter set RBSP syntax
+                // H.264-AVC-ISO_IEC_14496-10.pdf, page 45.
+                if (buf.byteLength < 3) {
+                    throw new Error("invalid sps, size=" + buf.byteLength);
+                }
+                var numOfSequenceParameterSets = buf[0]&0x1f;
+                if (numOfSequenceParameterSets != 1) {
+                    throw new Error("invalid sps, count=" + numOfSequenceParameterSets);
+                }
+                var sequenceParameterSetLength = (buf[1]<<8)|(buf[2]);
+                buf = buf.subarray(3);
+                if (buf.byteLength < sequenceParameterSetLength) {
+                    throw new Error("invalid sps, require=" + sequenceParameterSetLength);
+                }
+                self.avc.sps = buf.subarray(0, sequenceParameterSetLength);
+                buf = buf.subarray(sequenceParameterSetLength);
+
+                // 1 pps
+                if (buf.byteLength < 3) {
+                    throw new Error("invalid pps, size=" + buf.byteLength);
+                }
+                var numOfPictureParameterSets = buf[0]&0x1f;
+                if (numOfPictureParameterSets != 1) {
+                    throw new Error("invalid pps, count=" + numOfPictureParameterSets);
+                }
+                var pictureParameterSetLength = (buf[1]<<8)|(buf[2]);
+                buf = buf.subarray(3);
+                if (buf.byteLength < pictureParameterSetLength) {
+                    throw new Error("invalid pps, require=" + pictureParameterSetLength);
+                }
+                self.avc.pps = buf.subarray(0, pictureParameterSetLength);
+                buf = buf.subarray(pictureParameterSetLength);
+
+                self.avc.ok = true;
+            };
+            self.avc_demux_sample = function(buf, sample) {
+                if (!self.avc.ok) {
+                    throw new Error("drop for no sequence header");
+                }
+
+                // guess for the first time.
+                if (self.avc.payload_format == SrsAvcPayloadFormatGuess) {
+                    // One or more NALUs (Full frames are required)
+                    // try  "AnnexB" from H.264-AVC-ISO_IEC_14496-10.pdf, page 211.
+                    if (!self.avc_demux_annexb_format(buf, sample)) {
+                        // try "ISO Base Media File Format" from H.264-AVC-ISO_IEC_14496-15.pdf, page 20
+                        if (!self.avc_demux_ibmf_format(buf, sample)) {
+                            throw new Error("invalid format, not annexb or ibmf");
+                        } else {
+                            self.avc.payload_format = SrsAvcPayloadFormatIbmf;
+                        }
+                    } else {
+                        self.avc.payload_format = SrsAvcPayloadFormatAnnexb;
+                    }
+                } else if (self.avc.payload_format == SrsAvcPayloadFormatIbmf) {
+                    // try "ISO Base Media File Format" from H.264-AVC-ISO_IEC_14496-15.pdf, page 20
+                    if (!self.avc_demux_ibmf_format(buf, sample)) {
+                        throw new Error("invalid ibmf format.");
+                    }
+                } else {
+                    // One or more NALUs (Full frames are required)
+                    // try  "AnnexB" from H.264-AVC-ISO_IEC_14496-10.pdf, page 211.
+                    if (!self.avc_demux_annexb_format(buf, sample)) {
+                        // try "ISO Base Media File Format" from H.264-AVC-ISO_IEC_14496-15.pdf, page 20
+                        if (!self.avc_demux_ibmf_format(buf, sample)) {
+                            throw new Error("invalid format, not annexb or ibmf");
+                        } else {
+                            self.avc.payload_format = SrsAvcPayloadFormatIbmf;
+                        }
+                    }
+                }
+            };
+            self.avc_demux_annexb_format = function(buf, sample) {
+                var srs_avc_startswith_annexb = function(buf) {
+                    var p = buf.subarray(0);
+                    for (;;) {
+                        if (p.byteLength < 3) {
+                            return null;
+                        }
+
+                        // not match
+                        if (p[0] != 0x00 || p[1] != 0x00) {
+                            return null;
+                        }
+
+                        // match N[00] 00 00 01, where N>=0
+                        if (p[2] == 0x01) {
+                            return p;
+                        }
+
+                        p = p.subarray(1);
+                    }
+
+                    return null;
+                }
+
+                buf = srs_avc_startswith_annexb(buf);
+                // not annexb, try others
+                if (!buf) {
+                    return false;
+                }
+
+                // AnnexB
+                // B.1.1 Byte stream NAL unit syntax,
+                // H.264-AVC-ISO_IEC_14496-10.pdf, page 211.
+                while (buf && buf.byteLength > 0) {
+                    var next = srs_avc_startswith_annexb(buf.subarray(1));
+                    var nalu = buf.subarray(3, buf.byteLength - (next? next.byteLength:0) - 3);
+                    //console.log("got nalu " + nalu.byteLength);
+                    sample.nalus.push(nalu);
+                    buf = next;
+                }
+
+                sample.ok = true;
+                return true;
+            };
+            self.avc_demux_ibmf_format = function(buf, sample) {
+                while (buf && buf.byteLength > 0) {
+                    if (buf.byteLength < (self.avc.naluSize + 1)) {
+                        throw new Error("invalid nalu length, require=" + (self.avc.naluSize+1) + ", size=" + buf.byteLength);
+                    }
+                    var NALUnitLength = 0;
+                    if (self.avc.naluSize == 3) {
+                        NALUnitLength = (buf[0]<<24)|(buf[1]<<16)|(buf[2]<<8)|(buf[3]);
+                    } else if (self.avc.naluSize == 1) {
+                        NALUnitLength = (buf[0]<<8)|(buf[1]);
+                    } else {
+                        NALUnitLength = buf[0];
+                    }
+                    buf = buf.subarray(self.avc.naluSize + 1);
+
+                    // maybe stream is invalid format.
+                    // see: https://github.com/ossrs/srs/issues/183
+                    if (NALUnitLength < 0) {
+                        return false;
+                    }
+
+                    // NALUnit
+                    if (buf.byteLength < NALUnitLength) {
+                        throw new Error("invalid nalu, require=" + NALUnitLength + ", size=" + buf.byteLength);
+                    }
+                    // 7.3.1 NAL unit syntax, H.264-AVC-ISO_IEC_14496-10.pdf, page 44.
+                    var nalu = buf.subarray(0, NALUnitLength);
+                    //console.log("got nalu " + nalu.byteLength);
+                    sample.nalus.push(nalu);
+                    buf = buf.subarray(NALUnitLength);
+                }
+
+                sample.ok = true;
+                return true;
+            };
+            self.avc_transmux_sample = function(sample) {
+                console.log("avc(profile=" + self.avc.profile + ", level=" + self.avc.level
+                        + ", naluSize=" + self.avc.naluSize + ", sps=" + self.avc.sps.byteLength
+                        + ", pps=" + self.avc.pps.byteLength + ") frame type=" + sample.frame_type
+                        + ", size=" + sample.size + ", dts=" + sample.dts + ", pts=" + sample.pts
+                        + ", nalus=" + sample.nalus.length);
+            };
+        };
+
+        // the flv tag data.
         FlvTag = function() {
             var self = this;
             self.type = self.dts = 0; // uint
@@ -72,10 +498,11 @@
             };
         };
 
+        // read FlvTag from Uint8Array.
         FlvReader = function() {
             var self = this;
             self.header = {
-                parsed: false,
+                ok: false,
                 version: 0, // File version (for example, 0x01 for FLV version 1)
                 hasAudio: false, // 1 = Audio tags are present
                 hasVideo: false, // 1 = Video tags are present
@@ -84,7 +511,7 @@
             self.cache = null;
 
             // append bytes to reader:
-            //      (ibytes Uint8Array) void
+            //      append(ibytes Uint8Array) void
             self.append = function(ibytes) {
                 var everything;
                 if (self.cache && self.cache.byteLength > 0) {
@@ -99,6 +526,7 @@
             };
 
             // read FlvTag instance from reader.
+            //      read() (tag FlvTag)
             // @return null if eof, user should append bytes then parse.
             self.read = function(){
                 var everything = self.cache;
@@ -112,11 +540,11 @@
                     }
 
                     // parse flv header id: FLV.
-                    if (!self.header.parsed && everything[0] == 0x46 && everything[1] == 0x4C && everything[2] == 0x56) {
+                    if (!self.header.ok && everything[0] == 0x46 && everything[1] == 0x4C && everything[2] == 0x56) {
                         if (everything.byteLength < 13) {
                             return null;
                         }
-                        self.header.parsed = true;
+                        self.header.ok = true;
                         self.header.hasAudio = ((everything[4]&0x40) == 0x40);
                         self.header.hasVideo = ((everything[4]&0x01) == 0x01);
                         self.cache = everything = everything.subarray(13);
