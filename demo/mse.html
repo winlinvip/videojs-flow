@@ -9,25 +9,149 @@
     <script src="http://vjs.zencdn.net/ie8/1.1.2/videojs-ie8.min.js"></script>
 </head>
 <body>
+    <video id="my-video" autoplay controls></video>
     <script src="video.js"></script>
     <!--<script src="https://cdnjs.cloudflare.com/ajax/libs/video.js/5.10.2/video.js"></script>-->
-    <script src="muxer.js"></script>
+    <script src="mux.js"></script>
     <script>
-        var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
-        ws.onopen = function() {
-            document.write('<span>ws: ' + ws.url + ' opened</span><br/>');
+        var mediaSource = new MediaSource();
+
+        var video = document.getElementById("my-video");
+        video.src = URL.createObjectURL(mediaSource);
+
+        mediaSource.addEventListener('sourceopen', function(_){
+            var mimeCodec = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+            var sourceBuffer = mediaSource.addSourceBuffer(mimeCodec);
+
+            var flv = new FlvReader();
+
+            var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
+            ws.onmessage = function(evt) {
+                var b = evt.data; // Blob: https://developer.mozilla.org/en-US/docs/Web/API/Blob
+                var reader = new FileReader();
+                reader.addEventListener('loadend', function(){
+                    var bytes = new Uint8Array(reader.result);
+                    flowProcess(sourceBuffer, flv, bytes);
+                });
+                reader.readAsArrayBuffer(b);
+            };
+        });
+
+        function flowProcess(sourceBuffer, flv, bytes) {
+            flv.append(bytes);
+            while (true) {
+                var tag = flv.read();
+                if (!tag) {
+                    break;
+                }
+                console.log(tag.toString());
+            }
+        }
+
+        // The flv reader to parse flv stream.
+        // @see http://download.macromedia.com/f4v/video_file_format_spec_v10_1.pdf
+        var FlvReader, FlvTag;
+
+        FlvTag = function() {
+            var self = this;
+            self.type = self.dts = 0; // uint
+            self.tag = null; // Uint8Array.
+
+            self.isAudio = function() {
+                return self.type == 8;
+            }
+            self.isVideo = function () {
+                return self.type == 9;
+            };
+            self.isScriptData = function() {
+                return self.type == 18;
+            };
+            self.toString = function() {
+                var t = self.isAudio()? "Audio":self.isVideo()? "Video": self.isScriptData()? "Data":"Other";
+                return t + ', ' + Number(Number(self.dts)/1000).toFixed(2) + 's, ' + self.tag.byteLength + ' bytes';
+            };
         };
-        ws.onmessage = function(evt) {
-            var b = evt.data; // Blob: https://developer.mozilla.org/en-US/docs/Web/API/Blob
-            document.write('<span>ws: blob ' + b.type + ' ' + b.size + 'bytes</span><br/>');
-        };
-        ws.onclose = function(evt) {
-            document.write('<span font="yellow">ws: closed</span><br/>');
-            console.log(evt);
-        };
-        ws.onerror = function(evt) {
-            document.write('<span font="darkred">ws: closed</span><br/>');
-            console.log(evt);
+
+        FlvReader = function() {
+            var self = this;
+            self.header = {
+                parsed: false,
+                version: 0, // File version (for example, 0x01 for FLV version 1)
+                hasAudio: false, // 1 = Audio tags are present
+                hasVideo: false, // 1 = Video tags are present
+            };
+            self.sequenceHeader = null;
+            self.cache = null;
+
+            // append bytes to reader:
+            //      (ibytes Uint8Array) void
+            self.append = function(ibytes) {
+                var everything;
+                if (self.cache && self.cache.byteLength > 0) {
+                    everything = new Uint8Array(self.cache.byteLength + ibytes.byteLength);
+                    everything.set(self.cache);
+                    everything.set(ibytes, self.cache.byteLength);
+                } else {
+                    everything = ibytes;
+                }
+
+                self.cache = everything;
+            };
+
+            // read FlvTag instance from reader.
+            // @return null if eof, user should append bytes then parse.
+            self.read = function(){
+                var everything = self.cache;
+                if (!everything) {
+                    return null;
+                }
+
+                while(true) {
+                    if (everything.byteLength < 11) {
+                        return null;
+                    }
+
+                    // parse flv header id: FLV.
+                    if (!self.header.parsed && everything[0] == 0x46 && everything[1] == 0x4C && everything[2] == 0x56) {
+                        if (everything.byteLength < 13) {
+                            return null;
+                        }
+                        self.header.parsed = true;
+                        self.header.hasAudio = ((everything[4]&0x40) == 0x40);
+                        self.header.hasVideo = ((everything[4]&0x01) == 0x01);
+                        self.cache = everything = everything.subarray(13);
+                        continue;
+                    }
+
+                    // parse a tag from bytes.
+                    var obj = new FlvTag();
+                    obj.type = everything[0]&0x1f;
+                    var size = (everything[1]<<16)|(everything[2]<<8)|(everything[3]);
+                    obj.dts = (everything[7]<<24)|(everything[4]<<16)|(everything[5]<<8)|(everything[6]);
+                    if (everything.byteLength < 11 + size + 4) {
+                        return null;
+                    }
+                    obj.tag = everything.subarray(11, 11 + size);
+
+                    var index = 11 + size + 4; // 11:tag-header, size:tag, 4:previous-tag-size.
+                    self.cache = everything.subarray(index);
+                    var pps = (everything[index-4]<<24)|(everything[index-3]<<16)
+                            |(everything[index-2]<<8)|(everything[index-1]);
+                    if (obj.type != 8 && obj.type != 9 && obj.type != 18) {
+                        throw new Error("invalid type=" + obj.type);
+                    }
+                    if (pps != size+11) {
+                        throw new Error("invalid pps=" + pps + ", size=" + size);
+                    }
+                    if (obj.dts < 0) {
+                        throw new Error("invalid dts=" + obj.dts);
+                    }
+
+                    return obj;
+                }
+
+                return null;
+            };
         };
     </script>
 </body>
