@@ -5,7 +5,9 @@
 <head>
     <meta charset="utf-8">
     <title>MseLive</title>
+    <link href="video-js.css" rel="stylesheet">
     <!--<link href="http://vjs.zencdn.net/5.8.8/video-js.css" rel="stylesheet">-->
+    <script src="videojs-ie8.min.js"></script>
     <!--<script src="http://vjs.zencdn.net/ie8/1.1.2/videojs-ie8.min.js"></script>-->
 </head>
 <body>
@@ -14,87 +16,200 @@
     <!--<script src="https://cdnjs.cloudflare.com/ajax/libs/video.js/5.10.2/video.js"></script>-->
     <script src="mux.js"></script>
     <script>
-        var mediaSource = new MediaSource();
+        /**
+         * A Stream that can combine multiple streams (ie. audio & video)
+         * into a single output segment for MSE. Also supports audio-only
+         * and video-only streams.
+         */
+        CoalesceStream = function(options, metadataStream) {
+            // Number of Tracks per output segment
+            // If greater than 1, we combine multiple
+            // tracks into a single segment
+            this.numberOfTracks = 0;
+            this.metadataStream = metadataStream;
 
-        var video = document.getElementById("my-video");
-        video.src = URL.createObjectURL(mediaSource);
+            if (typeof options.remux !== 'undefined') {
+                this.remuxTracks = !!options.remux;
+            } else {
+                this.remuxTracks = true;
+            }
 
-        mediaSource.addEventListener('sourceopen', function(_){
-            var mimeCodec = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-            var sourceBuffer = mediaSource.addSourceBuffer(mimeCodec);
+            this.pendingTracks = [];
+            this.videoTrack = null;
+            this.pendingBoxes = [];
+            this.pendingCaptions = [];
+            this.pendingMetadata = [];
+            this.pendingBytes = 0;
+            this.emittedTracks = 0;
 
-            var flv = new FlvReader();
-            var codec = new FlvCodec();
-            var gop = new FlvGop();
+            CoalesceStream.prototype.init.call(this);
 
-            var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
-            ws.onmessage = function(evt) {
-                var b = evt.data; // Blob: https://developer.mozilla.org/en-US/docs/Web/API/Blob
-                var reader = new FileReader();
-                reader.addEventListener('loadend', function(){
-                    var bytes = new Uint8Array(reader.result);
-                    transmux(sourceBuffer, flv, gop, codec, bytes);
-                });
-                reader.readAsArrayBuffer(b);
+            // Take output from multiple
+            this.push = function(output) {
+                // buffer incoming captions until the associated video segment
+                // finishes
+                if (output.text) {
+                    return this.pendingCaptions.push(output);
+                }
+                // buffer incoming id3 tags until the final flush
+                if (output.frames) {
+                    return this.pendingMetadata.push(output);
+                }
+
+                // Add this track to the list of pending tracks and store
+                // important information required for the construction of
+                // the final segment
+                this.pendingTracks.push(output.track);
+                this.pendingBoxes.push(output.boxes);
+                this.pendingBytes += output.boxes.byteLength;
+
+                if (output.track.type === 'video') {
+                    this.videoTrack = output.track;
+                }
+                if (output.track.type === 'audio') {
+                    this.audioTrack = output.track;
+                }
             };
-        });
+        };
 
-        // flv => tag => annexb/adts => mp4 => mse.
-        function transmux(sourceBuffer, flv, gop, codec, bytes) {
-            flv.append(bytes);
+        // constants
+        var AUDIO_PROPERTIES = [
+            'audioobjecttype',
+            'channelcount',
+            'samplerate',
+            'samplingfrequencyindex',
+            'samplesize'
+        ];
 
-            while (true) {
-                var tag = flv.read();
-                if (!tag) {
-                    break;
-                }
+        var VIDEO_PROPERTIES = [
+            'width',
+            'height',
+            'profileIdc',
+            'levelIdc',
+            'profileCompatibility'
+        ];
 
-                if (tag.isSequenceHeader()) {
-                    if (tag.isAudio()) {
-                        codec.toAdts(tag);
-                        console.log("parse audio sequence header");
-                    } else {
-                        codec.toAnnexb(tag);
-                        console.log("parse video sequence header");
+        CoalesceStream.prototype = muxjs.codecs.h264.H264Stream.prototype; // Stream();
+        CoalesceStream.prototype.flush = function(flushSource) {
+            var
+                    offset = 0,
+                    event = {
+                        captions: [],
+                        metadata: [],
+                        info: {}
+                    },
+                    caption,
+                    id3,
+                    initSegment,
+                    timelineStartPts = 0,
+                    i;
+
+            if (this.pendingTracks.length < this.numberOfTracks) {
+                if (flushSource !== 'VideoSegmentStream' &&
+                        flushSource !== 'AudioSegmentStream') {
+                    // Return because we haven't received a flush from a data-generating
+                    // portion of the segment (meaning that we have only recieved meta-data
+                    // or captions.)
+                    return;
+                } else if (this.remuxTracks) {
+                    // Return until we have enough tracks from the pipeline to remux (if we
+                    // are remuxing audio and video into a single MP4)
+                    return;
+                } else if (this.pendingTracks.length === 0) {
+                    // In the case where we receive a flush without any data having been
+                    // received we consider it an emitted track for the purposes of coalescing
+                    // `done` events.
+                    // We do this for the case where there is an audio and video track in the
+                    // segment but no audio data. (seen in several playlists with alternate
+                    // audio tracks and no audio present in the main TS segments.)
+                    this.emittedTracks++;
+
+                    if (this.emittedTracks >= this.numberOfTracks) {
+                        this.trigger('done');
+                        this.emittedTracks = 0;
                     }
-                    continue;
-                }
-
-                // append to the gop.
-                gop.push(tag);
-
-                while (true) {
-                    // when got one complete gop, transmux it.
-                    var tags = gop.pop();
-                    if (!tags) {
-                        break;
-                    }
-                    var first = tags[0];
-                    var last = tags[tags.length - 1];
-                    console.log("parse gop " + tags.length + " tags, dts[" + first.dts
-                            + "," + last.dts + "], duration=" + (last.dts - first.dts));
-
-                    // parse all tags.
-                    for (var i in tags) {
-                        var tag = tags[i];
-
-                        if (tag.isAudio()) {
-                            var adts = codec.toAdts(tag);
-                            if (!adts) {
-                                continue;
-                            }
-                            //console.log("adts " + adts.byteLength + " bytes");
-                        } else if(tag.isVideo()) {
-                            var annexb = codec.toAnnexb(tag);
-                            if (!annexb) {
-                                continue;
-                            }
-                            //console.log("annexb " + annexb.byteLength + " bytes");
-                        }
-                    }
+                    return;
                 }
             }
-        }
+
+            if (this.videoTrack) {
+                timelineStartPts = this.videoTrack.timelineStartInfo.pts;
+                VIDEO_PROPERTIES.forEach(function(prop) {
+                    event.info[prop] = this.videoTrack[prop];
+                }, this);
+            } else if (this.audioTrack) {
+                timelineStartPts = this.audioTrack.timelineStartInfo.pts;
+                AUDIO_PROPERTIES.forEach(function(prop) {
+                    event.info[prop] = this.audioTrack[prop];
+                }, this);
+            }
+
+            if (this.pendingTracks.length === 1) {
+                event.type = this.pendingTracks[0].type;
+            } else {
+                event.type = 'combined';
+            }
+
+            this.emittedTracks += this.pendingTracks.length;
+
+            initSegment = muxjs.mp4.generator.initSegment(this.pendingTracks);
+
+            // Create a new typed array large enough to hold the init
+            // segment and all tracks
+            event.data = new Uint8Array(initSegment.byteLength +
+                    this.pendingBytes);
+
+            // Create an init segment containing a moov
+            // and track definitions
+            event.data.set(initSegment);
+            offset += initSegment.byteLength;
+
+            // Append each moof+mdat (one per track) after the init segment
+            for (i = 0; i < this.pendingBoxes.length; i++) {
+                event.data.set(this.pendingBoxes[i], offset);
+                offset += this.pendingBoxes[i].byteLength;
+            }
+
+            // Translate caption PTS times into second offsets into the
+            // video timeline for the segment
+            for (i = 0; i < this.pendingCaptions.length; i++) {
+                caption = this.pendingCaptions[i];
+                caption.startTime = (caption.startPts - timelineStartPts);
+                caption.startTime /= 90e3;
+                caption.endTime = (caption.endPts - timelineStartPts);
+                caption.endTime /= 90e3;
+                event.captions.push(caption);
+            }
+
+            // Translate ID3 frame PTS times into second offsets into the
+            // video timeline for the segment
+            for (i = 0; i < this.pendingMetadata.length; i++) {
+                id3 = this.pendingMetadata[i];
+                id3.cueTime = (id3.pts - timelineStartPts);
+                id3.cueTime /= 90e3;
+                event.metadata.push(id3);
+            }
+            // We add this to every single emitted segment even though we only need
+            // it for the first
+            event.metadata.dispatchType = this.metadataStream.dispatchType;
+
+            // Reset stream state
+            this.pendingTracks.length = 0;
+            this.videoTrack = null;
+            this.pendingBoxes.length = 0;
+            this.pendingCaptions.length = 0;
+            this.pendingBytes = 0;
+            this.pendingMetadata.length = 0;
+
+            // Emit the built segment
+            this.trigger('data', event);
+
+            // Only emit `done` if all tracks have been flushed and emitted
+            if (this.emittedTracks >= this.numberOfTracks) {
+                this.trigger('done');
+                this.emittedTracks = 0;
+            }
+        };
 
         // The flv reader to parse flv stream.
         // @see http://download.macromedia.com/f4v/video_file_format_spec_v10_1.pdf
@@ -232,6 +347,9 @@
             // @return null if not got adts frame.
             // @see SrsAacEncoder::write_audio
             self.toAdts = function(tag) {
+                // for audio, pts equals to dts.
+                tag.pts = tag.dts;
+
                 var buf = tag.tag;
                 if (buf.byteLength < 2) {
                     throw new Error("audio tag invalid, size=" + buf.byteLength);
@@ -384,6 +502,9 @@
                 // pts = dts + cts.
                 sample.cts = composition_time;
                 sample.pts = sample.dts + sample.cts;
+                // update tag pts.
+                tag.pts = sample.pts;
+
                 sample.avc_packet_type = avc_packet_type;
                 if (sample.avc_packet_type == 0) { // SequenceHeader
                     self.avc_demux_sps_pps(buf);
@@ -710,18 +831,19 @@
                     // insert cont nalu header before frame.
                     frame.set(cont_nalu_header, frameSize); frameSize += 3;
                     // sample data
-                    frame.set(nalu); frameSize += nalu.byteLength;
+                    frame.set(nalu, frameSize); frameSize += nalu.byteLength;
                 }
 
                 //console.log(frame.byteLength + ", " + frameSize);
-                return frame.subarray(0, frameSize);
+                var annexb = frame.subarray(0, frameSize);
+                return annexb;
             };
         };
 
         // the flv tag data.
         FlvTag = function() {
             var self = this;
-            self.type = self.dts = 0; // uint
+            self.type = self.dts = self.pts = 0; // uint
             self.tag = null; // Uint8Array.
 
             self.isAudio = function() {
@@ -735,6 +857,10 @@
                     return false;
                 }
 
+                if (self.tag.byteLength < 1) {
+                    throw new Error("invalid keyframe, size=" + self.tag.byteLength);
+                }
+
                 // @see: E.4.3 Video Tags, video_file_format_spec_v10_1.pdf, page 78
                 var frame_type = self.tag[0];
                 frame_type = (frame_type >> 4) & 0x0f;
@@ -743,10 +869,18 @@
                 return frame_type == SrsCodecVideoAVCFrameKeyFrame;
             };
             self.isAac = function() {
+                if (self.tag.byteLength < 1) {
+                    throw new Error("invalid aac frame, size=" + self.tag.byteLength);
+                }
+
                 var sound_format = (self.tag[0]>>4)&0x0f;
                 return sound_format == 10;
             };
             self.isAvc = function() {
+                if (self.tag.byteLength < 1) {
+                    throw new Error("invalid avc frame, size=" + self.tag.byteLength);
+                }
+
                 var codec_id = (self.tag[0]&0x0f);
                 return codec_id == 7;
             };
@@ -755,6 +889,11 @@
                     if (!self.isAac()) {
                         return false;
                     }
+
+                    if (self.tag.byteLength < 1) {
+                        throw new Error("invalid aac sh, size=" + self.tag.byteLength);
+                    }
+
                     var aacPacketType = self.tag[1];
                     return aacPacketType == 0;
                 }
@@ -762,6 +901,11 @@
                 if (!self.isVideo()) {
                     return false;
                 }
+
+                if (self.tag.byteLength < 1) {
+                    throw new Error("invalid avc sh, size=" + self.tag.byteLength);
+                }
+
                 var avcPacktType = self.tag[1];
                 return avcPacktType == 0;
             };
@@ -857,6 +1001,118 @@
                 return null;
             };
         };
+
+        // application.
+        var mediaSource = new MediaSource();
+
+        var video = document.getElementById("my-video");
+        video.src = URL.createObjectURL(mediaSource);
+
+        var pipeline = {};
+        pipeline.type = 'flow'; // FLOW(flv live over websocet), annexb to mp4.
+        pipeline.h264Stream = new muxjs.codecs.h264.H264Stream();
+        pipeline.adtsStream = new muxjs.codecs.adts(); // new AdtsStream()
+        pipeline.videoSegmentStream = new muxjs.mp4.VideoSegmentStream({type:'video',timelineStartInfo:{baseMediaDecodeTime:0,},/*track*/});
+        pipeline.audioSegmentStream = new muxjs.mp4.AudioSegmentStream({type:'audio',timelineStartInfo:{baseMediaDecodeTime:0,},/*track*/});
+        pipeline.coalesceStream = new CoalesceStream({}, {dispatchType:muxjs.mp2t.METADATA_STREAM_TYPE});
+        pipeline.h264Stream
+                .pipe(pipeline.videoSegmentStream)
+                .pipe(pipeline.coalesceStream);
+        pipeline.adtsStream
+                .pipe(pipeline.audioSegmentStream)
+                .pipe(pipeline.coalesceStream);
+
+        mediaSource.addEventListener('sourceopen', function(_){
+            var mimeCodec = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+            var sourceBuffer = mediaSource.addSourceBuffer(mimeCodec);
+
+            // append mp4 segment to mse.
+            pipeline.coalesceStream.on('data', function(segment){
+                console.log('append mp4 ' + segment.type + " " + segment.data.buffer.byteLength + " bytes");
+                sourceBuffer.appendBuffer(segment.data.buffer);
+            });
+
+            var flv = new FlvReader();
+            var codec = new FlvCodec();
+            var gop = new FlvGop();
+
+            var ws = new WebSocket("ws://127.0.0.1:8088/live/livestream.flv");
+            ws.onmessage = function(evt) {
+                var b = evt.data; // Blob: https://developer.mozilla.org/en-US/docs/Web/API/Blob
+                var reader = new FileReader();
+                reader.addEventListener('loadend', function(){
+                    var bytes = new Uint8Array(reader.result);
+                    transmux(bytes, flv, gop, codec, pipeline.h264Stream, pipeline.adtsStream);
+                });
+                reader.readAsArrayBuffer(b);
+            };
+        });
+
+        // flv => tag => annexb/adts => mp4 => mse.
+        function transmux(bytes, flv, gop, codec, h264, adts) {
+            flv.append(bytes);
+
+            var consumeGop = function() {
+                // when got one complete gop, transmux it.
+                var tags = gop.pop();
+                if (!tags) {
+                    return false;
+                }
+                var first = tags[0];
+                var last = tags[tags.length - 1];
+                /*console.log("parse gop " + tags.length + " tags, dts[" + first.dts
+                        + "," + last.dts + "], duration=" + (last.dts - first.dts));*/
+
+                // parse all tags.
+                for (var i in tags) {
+                    var tag = tags[i];
+
+                    if (tag.isAudio()) {
+                        var frame = codec.toAdts(tag);
+                        if (!frame) {
+                            continue;
+                        }
+                        //console.log("adts " + frame.byteLength + " bytes");
+                        adts.push({type:'audio', trackId:100, dts:tag.dts, pts:tag.pts, data:frame,});
+                    } else if(tag.isVideo()) {
+                        var frame = codec.toAnnexb(tag);
+                        if (!frame) {
+                            continue;
+                        }
+                        //console.log("annexb " + frame.byteLength + " bytes");
+                        h264.push({type:'video', trackId:101, dts:tag.dts, pts:tag.pts, data:frame,});
+                    }
+                }
+
+                adts.flush();
+                h264.flush();
+
+                return true;
+            };
+
+            while (true) {
+                var tag = flv.read();
+                if (!tag) {
+                    break;
+                }
+
+                if (tag.isSequenceHeader()) {
+                    if (tag.isAudio()) {
+                        codec.toAdts(tag);
+                        //console.log("parse audio sequence header");
+                    } else {
+                        codec.toAnnexb(tag);
+                        //console.log("parse video sequence header");
+                    }
+                    continue;
+                }
+
+                // append to the gop and conusme it.
+                gop.push(tag);
+                while (consumeGop()) {
+                }
+            }
+        }
     </script>
 </body>
 </html>
