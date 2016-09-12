@@ -297,9 +297,9 @@ FlowCodec = function() {
         sample.avc_packet_type = avc_packet_type;
         if (sample.avc_packet_type == 0) { // SequenceHeader
             self.avc_demux_sps_pps(buf);
-            /*console.log("sps/pps profile=" + self.avc.profile + ", level=" + self.avc.level
+            console.log("sps/pps profile=" + self.avc.profile + ", level=" + self.avc.level
              + ", naluSize=" + self.avc.naluSize + ", sps=" + (self.avc.sps? self.avc.sps.byteLength:0)
-             + ", pps=" + (self.avc.pps? self.avc.pps.byteLength:0));*/
+             + ", pps=" + (self.avc.pps? self.avc.pps.byteLength:0));
             return null;
         } else if (sample.avc_packet_type == 1) { // NALU
             self.avc_demux_sample(buf, sample)
@@ -825,7 +825,7 @@ FlowTransmuxer = function() {
 
     // append mp4 segment to mse.
     pipeline.coalesceStream.on('data', function(segment){
-        //console.log('append mp4 ' + segment.type + " " + segment.data.buffer.byteLength + " bytes");
+        console.log('append mp4 ' + segment.type + " " + segment.data.buffer.byteLength + " bytes");
         self.trigger('data', segment);
     });
 
