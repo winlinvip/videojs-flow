@@ -15,6 +15,8 @@ for [videojs](http://videojs.com/).
 
 To check your browser whether support MSE, click [here](http://ossrs.net/mse/html5.html).
 
+Online demo: http://ossrs.net/mse/mse.html
+
 ## Links
 
 About Websocket:
