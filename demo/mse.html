@@ -1012,8 +1012,8 @@
         pipeline.type = 'flow'; // FLOW(flv live over websocet), annexb to mp4.
         pipeline.h264Stream = new muxjs.codecs.h264.H264Stream();
         pipeline.adtsStream = new muxjs.codecs.adts(); // new AdtsStream()
-        pipeline.videoSegmentStream = new muxjs.mp4.VideoSegmentStream({type:'video',timelineStartInfo:{baseMediaDecodeTime:0,},/*track*/});
-        pipeline.audioSegmentStream = new muxjs.mp4.AudioSegmentStream({type:'audio',timelineStartInfo:{baseMediaDecodeTime:0,},/*track*/});
+        pipeline.videoSegmentStream = new muxjs.mp4.VideoSegmentStream({type:'video',codec:'avc',timelineStartInfo:{baseMediaDecodeTime:0,},/*track*/});
+        pipeline.audioSegmentStream = new muxjs.mp4.AudioSegmentStream({type:'audio',codec:'adts',timelineStartInfo:{baseMediaDecodeTime:0,},/*track*/});
         pipeline.coalesceStream = new CoalesceStream({}, {dispatchType:muxjs.mp2t.METADATA_STREAM_TYPE});
         pipeline.h264Stream
                 .pipe(pipeline.videoSegmentStream)
@@ -1023,13 +1023,17 @@
                 .pipe(pipeline.coalesceStream);
 
         mediaSource.addEventListener('sourceopen', function(_){
-            var mimeCodec = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
-            var sourceBuffer = mediaSource.addSourceBuffer(mimeCodec);
+            var audioSourceBuffer = mediaSource.addSourceBuffer('video/mp4;codecs="mp4a.40.2"');
+            var videoSourceBuffer = mediaSource.addSourceBuffer('video/mp4;codecs="avc1.42E01E"');
 
             // append mp4 segment to mse.
             pipeline.coalesceStream.on('data', function(segment){
                 console.log('append mp4 ' + segment.type + " " + segment.data.buffer.byteLength + " bytes");
-                sourceBuffer.appendBuffer(segment.data.buffer);
+                if (segment.type == 'audio') {
+                    audioSourceBuffer.appendBuffer(segment.data.buffer);
+                } else {
+                    videoSourceBuffer.appendBuffer(segment.data.buffer);
+                }
             });
 
             var flv = new FlvReader();
