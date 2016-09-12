@@ -40,7 +40,7 @@ func main()  {
 				return
 			}
 
-			fmt.Println("Transmux", n, "bytes")
+			//fmt.Println("Transmux", n, "bytes")
 		}
 	}))
 	if err := http.ListenAndServe(fmt.Sprintf(":%v", frontend), nil); err != nil {
