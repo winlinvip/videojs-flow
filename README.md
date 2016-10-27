@@ -11,6 +11,8 @@ for [videojs](http://videojs.com/).
                         +----------------+       +---------------------------+
 ```
 
+> Remark: Please use [bilibili/flv.js](https://github.com/Bilibili/flv.js#features) for videojs-flow.
+
 ## Usage
 
 To check your browser whether support MSE, click [here](http://ossrs.net/mse/html5.html).
