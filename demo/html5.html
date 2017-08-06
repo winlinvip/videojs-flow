@@ -16,7 +16,7 @@
 </head>
 <body>
 <div>
-    <h3>此浏览器支持哪些播放器？</h3>
+    <h3>此浏览器支持哪些H5特性？</h3>
     <ul>
         <li id="c-video">HTMLVideoElement</li>
         <li id="c-h264">H.264</li>
@@ -31,6 +31,13 @@
 
     <ul>
         <li id="c-websocket">WebSocket</li>
+    </ul>
+
+    <ul>
+        <li id="c-webrtc-getUserMedia">WebRTC:getUserMedia</li>
+        <li id="c-webrtc-webkitRTCPeerConnection">WebRTC:webkitRTCPeerConnection</li>
+        <li id="c-webrtc-RTCIceCandidate">WebRTC:RTCIceCandidate</li>
+        <li id="c-webrtc-RTCSessionDescription">WebRTC:RTCSessionDescription</li>
     </ul>
 
     <div id="html5-join-link"></div>
@@ -87,6 +94,11 @@
 
         var ua = document.getElementById("user-agent");
         ua.innerText = 'UserAgent: ' + navigator.userAgent;
+
+        setCompatibility('c-webrtc-getUserMedia', navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+        setCompatibility('c-webrtc-webkitRTCPeerConnection', window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection);
+        setCompatibility('c-webrtc-RTCIceCandidate', window.RTCIceCandidate);
+        setCompatibility('c-webrtc-RTCSessionDescription', window.RTCSessionDescription || window.mozRTCSessionDescription || window.webkitRTCSessionDescription);
     }
     checkFormats();
 </script>

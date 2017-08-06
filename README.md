@@ -21,6 +21,10 @@ Online demo: http://ossrs.net/mse/mse.html
 
 ## Links
 
+H5 capabilities:
+
+1. http://ossrs.net/mse/html5.html
+
 About Websocket:
 
 1. https://tools.ietf.org/html/rfc6455
