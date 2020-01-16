@@ -5,10 +5,10 @@ videojs-flow(flv live over websocket), low latency live streaming
 for [videojs](http://videojs.com/).
 
 ```
-+---------------+       +----------------+       +---------------------------+
-| videojs(MSE)  +---<---+ videojs-flow   +---<---+      Media Server         +
-+---------------+       + (js flv2mp4)   +       + (flv live over websocket) +
-                        +----------------+       +---------------------------+
++---------------+       +----------------+       +--------------+        +----------------------+
+| videojs(MSE)  +---<---+ videojs-flow   +---<---+ demo/mse.go  +--<-----+      Media Server    +
++---------------+       + (js flv2mp4)   +       + (http to ws) +        +   (http flv live)    +
+                        +----------------+       +--------------+        +----------------------+
 ```
 
 > Remark: Please use [bilibili/flv.js](https://github.com/Bilibili/flv.js#features) for videojs-flow.
