@@ -17,7 +17,14 @@ for [videojs](http://videojs.com/).
 
 To check your browser whether support MSE, click [here](http://ossrs.net/mse/html5.html).
 
-Online demo: http://ossrs.net/mse/mse.html
+To start SRS with a live stream `http://localhost:8081/live/livestream.flv`, please read [here](https://github.com/ossrs/srs/wiki/v3_EN_SampleHttpFlv).
+
+To run `demo/mse.go` to transmux HTTP-FLV to WebSocket-FLV `ws://localhost:8080/live/livestream.flv`:
+
+```
+go get golang.org/x/net/websocket &&
+go run mse.go -l 8080 -b 8081
+```
 
 ## Links
 
